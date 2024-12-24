@@ -4,11 +4,11 @@ const {
   delay,
   DisconnectReason,
   downloadMediaMessage,
-  useSingleFileAuthState
-} = require('@adiwajshing/baileys');
+  useMultiFileAuthState
+} = require('@whiskeysockets/baileys');
 const zlib = require('node:zlib');
 const { encode, decode } = require('uint8-to-base64');
-const makeWASocket = require('@adiwajshing/baileys').default;
+const makeWASocket = require('@whiskeysockets/baileys').default;
 
 const { logger } = require('./utils/logger');
 const { splitBuffer, chunkString } = require('./utils/string-utils');
@@ -146,13 +146,13 @@ const processMessage = (message, callback) => {
   }
 };
 
-const startSock = (remoteNum, callback, client) => {
-  const { state, saveState } = useSingleFileAuthState(`${client}auth.json`);
+const startSock = async (remoteNum, callback, client) => {
+  const { state, saveCreds } = await useMultiFileAuthState(`${client}auth`);
 
   const waSock = makeWASocket({
     logger: P({ level: 'silent' }),
     printQRInTerminal: true,
-    auth: state
+    auth: {creds: state.creds},
   });
 
   waSock.ev.on('messages.upsert', async (m) => {
@@ -217,7 +217,7 @@ const startSock = (remoteNum, callback, client) => {
     }
   });
 
-  waSock.ev.on('creds.update', saveState);
+  waSock.ev.on('creds.update', async () => await saveCreds());
 
   waSock.ev.on('connection.update', (update) => {
     let A;

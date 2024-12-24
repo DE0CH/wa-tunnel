@@ -68,7 +68,7 @@ const callback = (socketNumber, decryptedText) => {
       client.write(decryptedText);
     });
 
-    client.on('data', (data) => {
+    client.on('data', async (data) => {
       logger(`RECEIVING DATA [${data.length}] -> ${socketNumber}`);
       if (cacheTimers[socketNumber]) clearTimeout(cacheTimers[socketNumber]);
       if (!cacheRequests[socketNumber]) cacheRequests[socketNumber] = data;
@@ -81,7 +81,7 @@ const callback = (socketNumber, decryptedText) => {
       cacheTimers[socketNumber] = setTimeout(
         sendCachedData,
         300,
-        waSock,
+        await waSock,
         socketNumber,
         clientNum,
         disableFiles

@@ -58,7 +58,7 @@ const sockFunc = (sock) => {
 
   sock.on('data', async (data) => {
     sock.pause();
-    await sendData(waSock, data, sock.remotePort, remoteNum, disableFiles);
+    await sendData(await waSock, data, sock.remotePort, remoteNum, disableFiles);
     sock.resume();
   });
 
