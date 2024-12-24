@@ -256,6 +256,7 @@ const startSock = async (remoteNum, callback, client) => {
       }
     }
   )
+  return waSock
 }
 
 exports.startSock = startSock;
