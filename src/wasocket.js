@@ -4,13 +4,19 @@ const {
   delay,
   DisconnectReason,
   downloadMediaMessage,
-  useMultiFileAuthState
+  useMultiFileAuthState,
+  fetchLatestBaileysVersion,
+  makeCacheableSignalKeyStore
 } = require('@whiskeysockets/baileys');
 const zlib = require('node:zlib');
 const { encode, decode } = require('uint8-to-base64');
 const makeWASocket = require('@whiskeysockets/baileys').default;
 
 const { logger } = require('./utils/logger');
+const basic_logger = P(
+  { timestamp: () => `,"time":"${new Date().toJSON()}"` },
+  P.destination("./wa-logs.txt")
+)
 const { splitBuffer, chunkString } = require('./utils/string-utils');
 const { STATUS_CODES, LOGGER_TYPES, CHUNKSIZE, DELIMITER } = require('./constants');
 
@@ -147,99 +153,109 @@ const processMessage = (message, callback) => {
 };
 
 const startSock = async (remoteNum, callback, client) => {
-  const { state, saveCreds } = await useMultiFileAuthState(`${client}auth`);
+  const { state, saveCreds } = await useMultiFileAuthState("baileys_auth_info")
+  // fetch latest version of WA Web
+  const { version, isLatest } = await fetchLatestBaileysVersion()
+  console.log(`using WA v${version.join(".")}, isLatest: ${isLatest}`)
 
   const waSock = makeWASocket({
-    logger: P({ level: 'silent' }),
+    version,
+    logger: basic_logger,
     printQRInTerminal: true,
-    auth: {creds: state.creds},
-  });
-
-  waSock.ev.on('messages.upsert', async (m) => {
-    const msg = m.messages[0];
-    if (!msg.key.fromMe && m.type === 'notify') {
-      if (msg.key.remoteJid === remoteNum) {
-        if (msg.message) {
-          await waSock.readMessages([msg.key]);
-
-          let textThings;
-          let statusCode;
-          let dataPayload;
-          let socketNumber;
-          let socksMessageNumber;
-
-          if (msg.message.documentMessage) {
-            dataPayload = await downloadMediaMessage(msg, 'buffer');
-            textThings = msg.message.documentMessage.fileName.split('-');
-            statusCode = textThings[0];
-            socketNumber = textThings[2];
-            socksMessageNumber = parseInt(textThings[1]);
-          } else {
-            if (msg.message.extendedTextMessage) {
-              const text = msg.message.extendedTextMessage.text;
-              textThings = text.split('-');
-            } else {
-              const text = msg.message.conversation;
-              textThings = text.split('-');
-            }
-            statusCode = textThings[0];
-            socksMessageNumber = parseInt(textThings[1]);
-            socketNumber = textThings[2];
-            dataPayload = textThings[3];
-          }
-
-          const message = new Message(
-            statusCode,
-            socksMessageNumber,
-            socketNumber,
-            dataPayload
-          );
-
-          logger(`RECIEVING [${socksMessageNumber}] -> ${socketNumber}`);
-
-          // Buffering mechanism added in case messages not recieved in the correct order.
-          const lastSockMessageNumber = lastBufferNum[socketNumber];
+    auth: {
+      creds: state.creds,
+      /** caching makes the store faster to send/recv messages */
+      keys: makeCacheableSignalKeyStore(state.keys, basic_logger)
+    }
+  })
+  waSock.ev.process(
+    async events => {
+      if (events["connection.update"]) {
+        const update = events["connection.update"]
+        const { connection, lastDisconnect } = update
+        if (connection === "close") {
+          // reconnect if not logged out
           if (
-            (lastSockMessageNumber && socksMessageNumber > lastSockMessageNumber + 1) ||
-            (!lastSockMessageNumber && socksMessageNumber !== 1)
+            lastDisconnect?.error?.output?.statusCode !==
+            DisconnectReason.loggedOut
           ) {
-            logger(`BUFFERING MESSAGE [${socksMessageNumber}] -> ${socketNumber}`);
-
-            if (!messagesBuffer[socketNumber]) {
-              messagesBuffer[socketNumber] = [];
-            }
-            messagesBuffer[socketNumber].push(message);
+            startSock()
           } else {
-            processMessage(message, callback);
+            console.log("Connection closed. You are logged out.")
           }
         }
+        console.log("connection update", update)
+      }
+
+      // credentials updated -- save them
+      if (events["creds.update"]) {
+        await saveCreds()
+      }
+
+      if (events["messages.upsert"]) {
+        const msg = m.messages[0];
+        if (!msg.key.fromMe && m.type === 'notify') {
+          if (msg.key.remoteJid === remoteNum) {
+            if (msg.message) {
+              await waSock.readMessages([msg.key]);
+    
+              let textThings;
+              let statusCode;
+              let dataPayload;
+              let socketNumber;
+              let socksMessageNumber;
+    
+              if (msg.message.documentMessage) {
+                dataPayload = await downloadMediaMessage(msg, 'buffer');
+                textThings = msg.message.documentMessage.fileName.split('-');
+                statusCode = textThings[0];
+                socketNumber = textThings[2];
+                socksMessageNumber = parseInt(textThings[1]);
+              } else {
+                if (msg.message.extendedTextMessage) {
+                  const text = msg.message.extendedTextMessage.text;
+                  textThings = text.split('-');
+                } else {
+                  const text = msg.message.conversation;
+                  textThings = text.split('-');
+                }
+                statusCode = textThings[0];
+                socksMessageNumber = parseInt(textThings[1]);
+                socketNumber = textThings[2];
+                dataPayload = textThings[3];
+              }
+    
+              const message = new Message(
+                statusCode,
+                socksMessageNumber,
+                socketNumber,
+                dataPayload
+              );
+    
+              logger(`RECIEVING [${socksMessageNumber}] -> ${socketNumber}`);
+    
+              // Buffering mechanism added in case messages not recieved in the correct order.
+              const lastSockMessageNumber = lastBufferNum[socketNumber];
+              if (
+                (lastSockMessageNumber && socksMessageNumber > lastSockMessageNumber + 1) ||
+                (!lastSockMessageNumber && socksMessageNumber !== 1)
+              ) {
+                logger(`BUFFERING MESSAGE [${socksMessageNumber}] -> ${socketNumber}`);
+    
+                if (!messagesBuffer[socketNumber]) {
+                  messagesBuffer[socketNumber] = [];
+                }
+                messagesBuffer[socketNumber].push(message);
+              } else {
+                processMessage(message, callback);
+              }
+            }
+          }
+        }    
       }
     }
-  });
-
-  waSock.ev.on('creds.update', async () => await saveCreds());
-
-  waSock.ev.on('connection.update', (update) => {
-    let A;
-    let B;
-    const { connection } = update;
-    const { lastDisconnect } = update;
-    if (connection === 'close') {
-      if (
-        ((B = (A = lastDisconnect.error) === null || A === void 0 ? void 0 : A.output) ===
-          null || B === void 0
-          ? void 0
-          : B.statusCode) !== DisconnectReason.loggedOut
-      ) {
-        startSock(remoteNum, callback);
-      } else {
-        logger('connection closed', LOGGER_TYPES.ERROR);
-      }
-    }
-    logger(`connection update ${JSON.stringify(update)}`);
-  });
-  return waSock;
-};
+  )
+}
 
 exports.startSock = startSock;
 exports.sendData = sendData;
