@@ -193,6 +193,7 @@ const startSock = async (remoteNum, callback, client) => {
       }
 
       if (events["messages.upsert"]) {
+        m = events["messages.upsert"];
         const msg = m.messages[0];
         if (!msg.key.fromMe && m.type === 'notify') {
           if (msg.key.remoteJid === remoteNum) {
