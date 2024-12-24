@@ -42,7 +42,7 @@ const sendData = async (waSock, data, socketNumber, remoteNum, filesDisabled) =>
 
   const compressedData = encode(data);
 
-  (await waSock).presenceSubscribe(remoteNum); // Subscribing in order to send the messages faster
+  await waSock.presenceSubscribe(remoteNum); // Subscribing in order to send the messages faster
 
   if (compressedData.length > CHUNKSIZE && !filesDisabled) {
     // If data requires sending more than 1 message, send file if enabled.
@@ -52,7 +52,7 @@ const sendData = async (waSock, data, socketNumber, remoteNum, filesDisabled) =>
 
     socksNumber[socketNumber] += 1;
 
-    (await waSock).sendMessage(remoteNum, {
+    await waSock.sendMessage(remoteNum, {
       document: zlib.brotliCompressSync(data),
       mimetype: 'application/octet-stream',
       fileName: `f-${socksNumber[socketNumber]}-${socketNumber}`
@@ -80,7 +80,7 @@ const sendData = async (waSock, data, socketNumber, remoteNum, filesDisabled) =>
       // Should await sendMessage but gets too slow because syncs messages on both clients
 
       // eslint-disable-next-line no-await-in-loop
-      (await waSock).sendMessage(remoteNum, {
+      await waSock.sendMessage(remoteNum, {
         text: `${statusCode}-${socksNumber[socketNumber]}-${socketNumber}-${chunk}`
       });
     }
@@ -153,7 +153,7 @@ const processMessage = (message, callback) => {
 };
 
 const startSock = async (remoteNum, callback, client) => {
-  const { state, saveCreds } = await useMultiFileAuthState(`${client}auth`)
+  const { state, saveCreds } = await useMultiFileAuthState("baileys_auth_info")
   // fetch latest version of WA Web
   const { version, isLatest } = await fetchLatestBaileysVersion()
   console.log(`using WA v${version.join(".")}, isLatest: ${isLatest}`)
@@ -198,7 +198,7 @@ const startSock = async (remoteNum, callback, client) => {
         if (!msg.key.fromMe && m.type === 'notify') {
           if (msg.key.remoteJid === remoteNum) {
             if (msg.message) {
-              (await waSock).readMessages([msg.key]);
+              await waSock.readMessages([msg.key]);
     
               let textThings;
               let statusCode;
